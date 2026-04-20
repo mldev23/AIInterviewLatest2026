@@ -2,6 +2,8 @@
 
 import { auth, db } from "@/firebase/admin";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+
 
 // Session duration (1 week)
 const SESSION_DURATION = 60 * 60 * 24 * 7;
@@ -99,28 +101,37 @@ export async function signOut() {
 // Get current user from session cookie
 export async function getCurrentUser(): Promise<User | null> {
   const cookieStore = await cookies();
+  const sessionCookie =cookieStore.get("session")?.value;
 
-  const sessionCookie = cookieStore.get("session")?.value;
   if (!sessionCookie) return null;
 
   try {
     const decodedClaims = await auth.verifySessionCookie(sessionCookie, true);
 
-    // get user info from db
-    const userRecord = await db
+    const userDoc = await db
       .collection("users")
       .doc(decodedClaims.uid)
       .get();
-    if (!userRecord.exists) return null;
+
+    if (!userDoc.exists) return null;
 
     return {
-      ...userRecord.data(),
-      id: userRecord.id,
+      ...userDoc.data(),
+      id: userDoc.id,
     } as User;
-  } catch (error) {
-    console.log(error);
 
-    // Invalid or expired session
+  } catch (error: any) {
+    console.error("Auth error:", error.code);
+
+    // 🔥 Handle revoked / invalid session PROPERLY
+    if (
+      error.code === "auth/session-cookie-revoked" ||
+      error.code === "auth/argument-error"
+    ) {
+      cookieStore.delete("session"); // 🚨 clear bad cookie
+      redirect("/sign-in");        // 🚨 force re-login
+    }
+
     return null;
   }
 }
